@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	maxReplicas = 2
+	maxReplicas = 3
 	minReplicas = 1
 )
 

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -22,7 +24,16 @@ func CreateInstance(containerName string) (*container.CreateResponse, error) {
 	containerConf := container.Config{
 		Image: "server",
 	}
-	hostConf := container.HostConfig{}
+
+	hostConf := container.HostConfig{
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeBind,
+				Source: "/etc/app/containerid",
+				Target: "/containerid",
+			},
+		},
+	}
 
 	network := network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
@@ -37,6 +48,11 @@ func CreateInstance(containerName string) (*container.CreateResponse, error) {
 	resp, err := dockerClient.ContainerCreate(context.Background(), &containerConf, &hostConf, &network, &platform, containerName)
 	if err != nil {
 		return nil, fmt.Errorf("error creating node. %s", err.Error())
+	}
+
+	err = os.WriteFile("/etc/app/containerid", []byte(resp.ID), 0644)
+	if err != nil {
+		log.Fatal("Error writing container ID to file: ", err)
 	}
 
 	if err := dockerClient.ContainerStart(context.Background(), resp.ID, container.StartOptions{}); err != nil {
