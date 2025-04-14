@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"the-autoscaler/utils"
@@ -27,7 +28,8 @@ type SystemStatus struct {
 }
 
 func requestNewNode() error {
-	resp, err := http.Get("http://localhost:8080/create")
+	orchestratorHostname := os.Getenv("ORCHESTRATOR_URL")
+	resp, err := http.Get("http://" + orchestratorHostname + ":8080/create")
 	if err != nil {
 		return err
 	}
@@ -40,7 +42,8 @@ func requestNewNode() error {
 }
 
 func requestDeleteNode(containerID string) error {
-	resp, err := http.Get("http://localhost:8080/delete?id=" + containerID)
+	orchestratorHostname := os.Getenv("ORCHESTRATOR_URL")
+	resp, err := http.Get("http://" + orchestratorHostname + ":8080/delete?id=" + containerID)
 	if err != nil {
 		return err
 	}
@@ -53,7 +56,7 @@ func requestDeleteNode(containerID string) error {
 }
 
 func getContainerID() (string, error) {
-	cmd := exec.Command("cat /containerid")
+	cmd := exec.Command("cat", "/containerid")
 
 	var out strings.Builder
 	cmd.Stdout = &out
@@ -124,7 +127,6 @@ func checkSystem() SystemStatus {
 }
 
 func main() {
-	// Set up periodic checks
 	go func() {
 		ticker := time.NewTicker(CheckInterval)
 		defer ticker.Stop()
@@ -145,3 +147,5 @@ func main() {
 		log.Fatalf("Error starting server: %v", err)
 	}
 }
+
+// get ip: ifconfig | grep -w inet | awk '{print $2} ' | tail -n 1
