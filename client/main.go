@@ -147,5 +147,3 @@ func main() {
 		log.Fatalf("Error starting server: %v", err)
 	}
 }
-
-// get ip: ifconfig | grep -w inet | awk '{print $2} ' | tail -n 1
