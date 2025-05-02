@@ -24,7 +24,7 @@ func CheckFreeMemory() (uint64, error) {
 }
 
 func CheckCPUPercent() (float64, error) {
-	percent, err := cpu.Percent(time.Minute, false)
+	percent, err := cpu.Percent(time.Second, false)
 	if err != nil {
 		return 0.0, err
 	}

@@ -1,58 +1,25 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"log"
-	"net/http"
-	"os"
 	"os/exec"
 	"strings"
-	"the-autoscaler/utils"
 	"time"
-)
 
-const (
-	CPULimit       = 80.0
-	MemoryLimit    = 10000000 //10MB
-	CPURequired    = 20.0
-	MemoryRequired = 1000000 //1MB
-	CheckInterval  = 2 * time.Minute
-	APIPort        = ":8081"
+	pb "the-autoscaler/proto"
+	"the-autoscaler/utils"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type SystemStatus struct {
 	CPUPercent  float64 `json:"cpuPercent"`
 	FreeMemory  uint64  `json:"freeMemory"`
-	NeedsNode   bool    `json:"needsNode"`
 	ContainerID string  `json:"containerId,omitempty"`
-}
-
-func requestNewNode() error {
-	orchestratorHostname := os.Getenv("ORCHESTRATOR_URL")
-	resp, err := http.Get("http://" + orchestratorHostname + ":8080/create")
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to request new node: %s", resp.Status)
-	}
-
-	return nil
-}
-
-func requestDeleteNode(containerID string) error {
-	orchestratorHostname := os.Getenv("ORCHESTRATOR_URL")
-	resp, err := http.Get("http://" + orchestratorHostname + ":8080/delete?id=" + containerID)
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to request delete node: %s", resp.Status)
-	}
-
-	return nil
 }
 
 func getContainerID() (string, error) {
@@ -70,80 +37,68 @@ func getContainerID() (string, error) {
 	return containerID, nil
 }
 
-func checkSystem() SystemStatus {
-	var status SystemStatus
+func checkSystem() (*SystemStatus, error) {
+	status := &SystemStatus{}
 	var err error
-
-	status.CPUPercent, err = utils.CheckCPUPercent()
-	if err != nil {
-		log.Printf("Error checking CPU percent: %v", err)
-	}
-
-	status.FreeMemory, err = utils.CheckFreeMemory()
-	if err != nil {
-		log.Printf("Error checking free memory: %v", err)
-	}
-
-	if status.CPUPercent > CPULimit {
-		log.Println("CPU usage is too high.")
-		status.NeedsNode = true
-	}
-
-	if status.FreeMemory < MemoryLimit {
-		log.Println("Memory usage is too high.")
-		status.NeedsNode = true
-	}
-
-	if status.CPUPercent < CPURequired && status.FreeMemory > MemoryRequired {
-		log.Println("Resources usage is low.")
-		status.NeedsNode = false
-	}
-
-	if status.NeedsNode {
-		err := requestNewNode()
-		if err != nil {
-			log.Printf("Error requesting new node: %v", err)
-		} else {
-			log.Println("New node requested.")
-		}
-	}
-	if !status.NeedsNode {
-		err := requestDeleteNode(status.ContainerID)
-		if err != nil {
-			log.Printf("Error requesting delete node: %v", err)
-		} else {
-			log.Println("Node deleted.")
-		}
-	}
 
 	status.ContainerID, err = getContainerID()
 	if err != nil {
-		log.Printf("Error getting container ID: %v", err)
+		return nil, fmt.Errorf("error getting container ID: %v", err)
 	} else {
 		log.Println("Container ID:", status.ContainerID)
 	}
 
-	return status
+	status.CPUPercent, err = utils.CheckCPUPercent()
+	if err != nil {
+		return nil, fmt.Errorf("error checking CPU percent: %v", err)
+	}
+
+	status.FreeMemory, err = utils.CheckFreeMemory()
+	if err != nil {
+		return nil, fmt.Errorf("error checking free memory: %v", err)
+	}
+
+	return status, nil
 }
 
+var (
+	addr = flag.String("addr", "localhost:50051", "the address to connect to")
+)
+
 func main() {
-	go func() {
-		ticker := time.NewTicker(CheckInterval)
-		defer ticker.Stop()
+	flag.Parse()
 
-		for {
-			select {
-			case <-ticker.C:
-				log.Println("Running scheduled system check...")
-				checkSystem()
+	log.Printf("Starting gRPC client on port %s...\n", *addr)
+	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("failed connect to server: %v", err)
+	}
+	defer conn.Close()
+
+	client := pb.NewTheAutocalerClient(conn)
+
+	// collect metrics every minute
+	ticker := time.NewTicker(time.Minute)
+	for range ticker.C {
+		func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+
+			systemStatus, err := checkSystem()
+			if err != nil {
+				log.Fatalf("failed checking client system status: %v", err)
 			}
-		}
-	}()
 
-	log.Printf("Starting API server on port %s...", APIPort)
-	log.Printf("System checks will run every %v", CheckInterval)
+			request := &pb.CheckRequest{
+				CpuPercent:    systemStatus.CPUPercent,
+				MemoryPercent: float64(systemStatus.FreeMemory),
+				ContainerId:   systemStatus.ContainerID,
+			}
 
-	if err := http.ListenAndServe(APIPort, nil); err != nil {
-		log.Fatalf("Error starting server: %v", err)
+			_, err = client.CheckResourcesUsage(ctx, request)
+			if err != nil {
+				log.Fatalf("failed getting client resources usage: %v", err)
+			}
+		}()
 	}
 }

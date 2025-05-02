@@ -1,0 +1,21 @@
+FROM golang:1.24.2-bookworm
+
+RUN apt-get update -y && apt install -y net-tools
+
+# Install docker in docker
+RUN curl -fsSL https://get.docker.com -o get-docker.sh
+RUN sh get-docker.sh
+
+WORKDIR /app
+
+COPY server server
+COPY proto proto
+COPY utils utils
+COPY docker docker
+
+RUN mkdir /etc/app/
+
+RUN go mod init the-autoscaler && go mod tidy
+RUN go build -o server_grcp server/main.go
+
+ENTRYPOINT ["./server_grcp"]
