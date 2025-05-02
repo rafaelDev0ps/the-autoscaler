@@ -1,0 +1,23 @@
+FROM golang:1.24.2-bookworm
+
+RUN apt-get update -y && apt install -y net-tools
+
+WORKDIR /app
+
+COPY client client
+COPY proto proto
+COPY utils utils
+
+RUN mkdir /etc/app/
+
+RUN go mod init the-autoscaler && go mod tidy
+
+RUN go build -o client_grcp client/main.go
+
+ARG ORCHESTRATOR_URL="localhost"
+
+ENV ORCHESTRATOR_URL=${ORCHESTRATOR_URL}
+
+EXPOSE 50051
+
+ENTRYPOINT ["./client_grcp"]
